@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Float};
 use std::io::Cursor;
 use std::thread;
 use std::time::Duration;
@@ -13,23 +13,55 @@ use tray_icon::{
     menu::{IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, accelerator::Modifiers},
 };
 
+const FADE: Duration = Duration::from_millis(40);
+const FADE_STEPS: u32 = 8;
+
 struct Audio {
-    _handle: MixerDeviceSink,
-    player: Player,
+    sink: MixerDeviceSink,
+    current: Option<(Sound, Player)>,
 }
 
 impl Audio {
     fn new() -> anyhow::Result<Self> {
-        let _handle =
+        let sink =
             DeviceSinkBuilder::open_default_sink().context("failed to open device sink")?;
-        let player = Player::connect_new(_handle.mixer());
-        Ok(Self { _handle, player })
+        Ok(Self {
+            sink,
+            current: None
+        })
     }
 
-    fn play(&self, sound: Sound) -> anyhow::Result<()> {
-        self.player
-            .append(Decoder::try_from(Cursor::new(sound.bytes()))?);
+    fn trigger(&mut self, sound: Sound) -> anyhow::Result<()> {
+        let toggle_off = matches!(&self.current, Some((s, p)) if *s == sound && !p.empty());
+
+        self.fade_out_current();
+
+        if toggle_off {
+            return Ok(());
+        }
+
+        let player = Player::connect_new(self.sink.mixer());
+        player.append(Decoder::try_from(Cursor::new(sound.bytes()))?);
+        self.current = Some((sound, player));
         Ok(())
+    }
+
+    fn fade_out_current(&mut self) {
+        let Some((_, player)) = self.current.take() else {
+            return;
+        };
+
+        // Already finished on its own — nothing to fade, just drop it.
+        if player.empty() {
+            return;
+        }
+
+        thread::spawn(move || {
+            for step in (0..FADE_STEPS).rev() {
+                player.set_volume(step as Float / FADE_STEPS as Float);
+                thread::sleep(FADE / FADE_STEPS);
+            }
+        });
     }
 }
 
@@ -100,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     let mut tray = None;
-    let audio = Audio::new()?;
+    let mut audio = Audio::new()?;
 
     let menu = Menu::new();
 
@@ -144,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tray.take();
                     *control_flow = ControlFlow::Exit;
                 } else if let Some(sound) = Sound::from_id(e.id.0.as_str()) {
-                    if let Err(err) = audio.play(sound) {
+                    if let Err(err) = audio.trigger(sound) {
                         eprintln!("error playing sound: {err}");
                     }
                 }
