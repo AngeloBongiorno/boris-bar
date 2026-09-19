@@ -170,6 +170,7 @@ dependencies = [
 name = "boris-bar"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "dirs",
  "image",
  "objc2-core-foundation",
