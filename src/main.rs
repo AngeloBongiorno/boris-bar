@@ -1,4 +1,8 @@
 use anyhow::{Context, Result};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
+use std::io::Cursor;
+use std::thread;
+use std::time::Duration;
 use tao::{
     event::{Event, StartCause},
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -8,6 +12,26 @@ use tray_icon::{
     Icon, TrayIconBuilder, TrayIconEvent,
     menu::{IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, accelerator::Modifiers},
 };
+
+struct Audio {
+    _handle: MixerDeviceSink,
+    player: Player,
+}
+
+impl Audio {
+    fn new() -> anyhow::Result<Self> {
+        let _handle =
+            DeviceSinkBuilder::open_default_sink().context("failed to open device sink")?;
+        let player = Player::connect_new(_handle.mixer());
+        Ok(Self { _handle, player })
+    }
+
+    fn play(&self, sound: Sound) -> anyhow::Result<()> {
+        self.player
+            .append(Decoder::try_from(Cursor::new(sound.bytes()))?);
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Sound {
@@ -47,6 +71,13 @@ impl Sound {
     fn from_id(id: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|s| s.id() == id)
     }
+
+    fn bytes(self) -> &'static [u8] {
+        match self {
+            Sound::Sforzo => include_bytes!("../assets/clips/fai_uno_sforzo.mp3"),
+            _ => todo!(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -56,6 +87,8 @@ enum AppEvent {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    thread::sleep(Duration::from_secs(1));
+
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     TrayIconEvent::set_event_handler(Some(move |event| {
@@ -67,6 +100,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     let mut tray = None;
+    let audio = Audio::new()?;
+
     let menu = Menu::new();
 
     let item_quit = MenuItem::new("quit", true, None);
@@ -109,10 +144,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tray.take();
                     *control_flow = ControlFlow::Exit;
                 } else if let Some(sound) = Sound::from_id(e.id.0.as_str()) {
-                    match sound {
-                        Sound::Sforzo => println!("Fai uno sforzo"),
-                        Sound::Basiti => println!("Tutti basiti"),
-                        Sound::Cane => println!("A cazzo di cane"),
+                    if let Err(err) = audio.play(sound) {
+                        eprintln!("error playing sound: {err}");
                     }
                 }
             }
