@@ -1,0 +1,13 @@
+[package]
+name = "boris-bar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dirs = "7.0.0"
+image = "0.25.10"
+tao = "0.37.0"
+tray-icon = "0.25.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = "0.3.2"

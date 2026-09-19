@@ -30,3 +30,8 @@ SceneAnalyzer/
 .claude/
 
 # Plan file (scratch)
+
+
+# Added by cargo
+
+/target
