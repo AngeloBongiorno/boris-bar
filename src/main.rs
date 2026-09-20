@@ -55,6 +55,13 @@ const CANE: ClipData = ClipData {
     bytes: include_bytes!(concat!(env!("OUT_DIR"), "/a_cazzo_di_cane.mp3")),
 };
 
+const F4: ClipData = ClipData {
+    id: "F4",
+    label: "F4",
+    digit: 4,
+    bytes: include_bytes!(concat!(env!("OUT_DIR"), "/f4.mp3")),
+};
+
 struct HotkeyManager {
     manager: GlobalHotKeyManager,
     by_id: HashMap<u32, Clip>,
@@ -134,16 +141,18 @@ enum Clip {
     Sforzo,
     Basiti,
     Cane,
+    F4,
 }
 
 impl Clip {
-    const ALL: &'static [Clip] = &[Clip::Sforzo, Clip::Basiti, Clip::Cane];
+    const ALL: &'static [Clip] = &[Clip::Sforzo, Clip::Basiti, Clip::Cane, Clip::F4];
 
     const fn data(self) -> &'static ClipData {
         match self {
             Clip::Sforzo => &SFORZO,
             Clip::Basiti => &BASITI,
             Clip::Cane => &CANE,
+            Clip::F4 => &F4,
         }
     }
 
@@ -160,6 +169,7 @@ impl Clip {
             1 => MenuCode::Digit1,
             2 => MenuCode::Digit2,
             3 => MenuCode::Digit3,
+            4 => MenuCode::Digit4,
             _ => unreachable!("unsupported digit"),
         };
         MenuShortcut::new(M_CMD_OR_CTRL | MenuModifiers::ALT, code)
@@ -170,6 +180,7 @@ impl Clip {
             1 => HotkeyCode::Digit1,
             2 => HotkeyCode::Digit2,
             3 => HotkeyCode::Digit3,
+            4 => HotkeyCode::Digit4,
             _ => unreachable!("unsupported digit"),
         };
         GlobalShortcut::new(Some(HK_CMD_OR_CTRL | GlobalModifiers::ALT), code)
@@ -221,6 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let menu = Menu::new();
 
     let item_quit = MenuItem::new("Esci", true, None);
+    let item_about = MenuItem::new("Informazioni e disclaimer...", true, None);
 
     let clip_items: Vec<MenuItem> = Clip::ALL
         .iter()
@@ -234,6 +246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let separator = PredefinedMenuItem::separator();
     let mut refs: Vec<&dyn IsMenuItem> = clip_items.iter().map(|i| i as &dyn IsMenuItem).collect();
     refs.push(&separator);
+    refs.push(&item_about);
     refs.push(&item_quit);
 
     menu.append_items(&refs)?;
@@ -263,6 +276,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if e.id == item_quit.id() {
                     tray.take();
                     *control_flow = ControlFlow::Exit;
+                } else if e.id == item_about.id() {
+                    show_about();
                 } else if let Some(clip) = Clip::from_id(e.id.0.as_str()) {
                     play(&mut audio, clip)
                 }
@@ -308,4 +323,59 @@ fn fallback_icon() -> Icon {
         }
     }
     Icon::from_rgba(rgba, SIZE, SIZE).expect("fallback icon is always valid")
+}
+
+const GITHUB: &str = "https://github.com/AngeloBongiorno/boris-bar";
+const LICENSE: &str = "https://github.com/AngeloBongiorno/boris-bar/blob/main/LICENSE";
+
+const DISCLAIMER: &str = "\
+Versione 1.0 · © 2026 Andrea Ricciotti / PunxCode / AngeloBongiorno
+
+Boris Bar è un progetto amatoriale, gratuito, open source, senza scopo di \
+lucro, creato da un fan della serie TV italiana Boris.
+
+NON AFFILIAZIONE. Non è un prodotto ufficiale. Non è affiliato, sponsorizzato \
+o approvato da RAI, Wildside, Sky, Mediaset, Disney+ né dagli autori della \
+serie (Ciarrapico, Vendruscolo, Torre) o dagli interpreti.
+
+ORIGINE AUDIO. I clip sono brevi estratti (pochi secondi) scaricati da \
+YouTube, da video pubblicamente accessibili caricati da terzi. Usati \
+esclusivamente a scopo di omaggio, critica, commento, satira, parodia e \
+pastiche (art. 70 L. 633/1941, dir. UE 2019/790 art. 17(7)).
+
+NESSUN LUCRO. Nessuna vendita, donazione, pubblicità, tracking o \
+monetizzazione di alcun tipo.
+
+PROPRIETÀ. Tutti i marchi, personaggi, dialoghi, nomi e loghi sono proprietà \
+dei rispettivi titolari.
+
+TAKEDOWN / DMCA. I detentori di diritti possono richiedere la rimozione \
+scrivendo a andrearicciotti1@gmail.com o aprendo una issue su GitHub. \
+Richieste legittime onorate entro 24h.
+
+Codice: licenza MIT.";
+
+fn show_about() {
+    let result = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Info)
+        .set_title("Boris Bar — Fan project non commerciale")
+        .set_description(DISCLAIMER)
+        .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+            "OK".to_owned(),
+            "Apri GitHub".to_owned(),
+            "Apri licenza".to_owned(),
+        ))
+        .show();
+
+    let url = match result {
+        rfd::MessageDialogResult::Custom(label) if label == "Apri GitHub" => Some(GITHUB),
+        rfd::MessageDialogResult::Custom(label) if label == "Apri licenza" => Some(LICENSE),
+        _ => None,
+    };
+
+    if let Some(url) = url {
+        if let Err(err) = opener::open_browser(url) {
+            eprintln!("failed to open {url}: {err}");
+        }
+    }
 }

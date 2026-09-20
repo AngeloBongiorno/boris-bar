@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-const CLIPS: &[&str] = &["fai_uno_sforzo", "tutti_basiti", "a_cazzo_di_cane"];
+const CLIPS: &[&str] = &["fai_uno_sforzo", "tutti_basiti", "a_cazzo_di_cane", "f4"];
 
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
