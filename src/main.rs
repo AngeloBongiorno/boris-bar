@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
     hotkey::{
-        CMD_OR_CTRL as HK_CMD_OR_CTRL, Code as HotkeyCode, HotKey as GlobalShortcut, Modifiers as GlobalModifiers,
+        CMD_OR_CTRL as HK_CMD_OR_CTRL, Code as HotkeyCode, HotKey as GlobalShortcut,
+        Modifiers as GlobalModifiers,
     },
 };
 use rodio::{Decoder, DeviceSinkBuilder, Float, MixerDeviceSink, Player};
@@ -16,13 +17,68 @@ use tray_icon::{
     menu::{
         IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem,
         accelerator::{
-            Accelerator as MenuShortcut, CMD_OR_CTRL as M_CMD_OR_CTRL, Code as MenuCode, Modifiers as MenuModifiers,
+            Accelerator as MenuShortcut, CMD_OR_CTRL as M_CMD_OR_CTRL, Code as MenuCode,
+            Modifiers as MenuModifiers,
         },
     },
 };
 
 const FADE: Duration = Duration::from_millis(40);
 const FADE_STEPS: u32 = 8;
+
+struct ClipData {
+    id: &'static str,
+    label: &'static str,
+    digit: u8,
+    bytes: &'static [u8],
+}
+
+const SFORZO: ClipData = ClipData {
+    id: "fai uno sforzo",
+    label: "Fai uno sforzo",
+    digit: 1,
+    bytes: include_bytes!(concat!(env!("OUT_DIR"), "/fai_uno_sforzo.mp3")),
+};
+
+const BASITI: ClipData = ClipData {
+    id: "tutti basiti",
+    label: "Tutti basiti",
+    digit: 2,
+    bytes: include_bytes!(concat!(env!("OUT_DIR"), "/tutti_basiti.mp3")),
+};
+
+const CANE: ClipData = ClipData {
+    id: "a cazzo di cane",
+    label: "A cazzo di cane",
+    digit: 3,
+    bytes: include_bytes!(concat!(env!("OUT_DIR"), "/a_cazzo_di_cane.mp3")),
+};
+
+struct HotkeyManager {
+    manager: GlobalHotKeyManager,
+    by_id: HashMap<u32, Clip>,
+}
+
+impl HotkeyManager {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            manager: GlobalHotKeyManager::new()
+                .context("failed to create global hotkey manager")?,
+            by_id: HashMap::new(),
+        })
+    }
+
+    fn register(&mut self, clip: Clip) -> Result<()> {
+        let hotkey = clip.global_shortcut();
+        self.manager.register(hotkey)?;
+        self.by_id.insert(hotkey.id(), clip);
+        Ok(())
+    }
+
+    fn clip_for(&self, id: u32) -> Option<Clip> {
+        self.by_id.get(&id).copied()
+    }
+}
 
 struct Audio {
     sink: MixerDeviceSink,
@@ -72,7 +128,7 @@ impl Audio {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Clip {
     Sforzo,
     Basiti,
@@ -82,36 +138,38 @@ enum Clip {
 impl Clip {
     const ALL: &'static [Clip] = &[Clip::Sforzo, Clip::Basiti, Clip::Cane];
 
-    const fn id(self) -> &'static str {
+    const fn data(self) -> &'static ClipData {
         match self {
-            Clip::Sforzo => "fai uno sforzo",
-            Clip::Basiti => "tutti basiti",
-            Clip::Cane => "a cazzo di cane",
+            Clip::Sforzo => &SFORZO,
+            Clip::Basiti => &BASITI,
+            Clip::Cane => &CANE,
         }
+    }
+
+    const fn id(self) -> &'static str {
+        self.data().id
     }
 
     const fn label(self) -> &'static str {
-        match self {
-            Clip::Sforzo => "Fai uno sforzo",
-            Clip::Basiti => "Tutti basiti",
-            Clip::Cane => "A cazzo di cane",
-        }
+        self.data().label
     }
 
     fn menu_shortcut(self) -> MenuShortcut {
-        let code = match self {
-            Clip::Sforzo => MenuCode::Digit1,
-            Clip::Basiti => MenuCode::Digit2,
-            Clip::Cane => MenuCode::Digit3,
+        let code = match self.data().digit {
+            1 => MenuCode::Digit1,
+            2 => MenuCode::Digit2,
+            3 => MenuCode::Digit3,
+            _ => unreachable!("unsupported digit"),
         };
         MenuShortcut::new(M_CMD_OR_CTRL | MenuModifiers::ALT, code)
     }
 
     fn global_shortcut(self) -> GlobalShortcut {
-        let code = match self {
-            Clip::Sforzo => HotkeyCode::Digit1,
-            Clip::Basiti => HotkeyCode::Digit2,
-            Clip::Cane => HotkeyCode::Digit3,
+        let code = match self.data().digit {
+            1 => HotkeyCode::Digit1,
+            2 => HotkeyCode::Digit2,
+            3 => HotkeyCode::Digit3,
+            _ => unreachable!("unsupported digit"),
         };
         GlobalShortcut::new(Some(HK_CMD_OR_CTRL | GlobalModifiers::ALT), code)
     }
@@ -120,18 +178,8 @@ impl Clip {
         Self::ALL.iter().copied().find(|s| s.id() == id)
     }
 
-    fn from_hotkey_id(id: u32) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|s| s.global_shortcut().id == id)
-    }
-
     fn bytes(self) -> &'static [u8] {
-        match self {
-            Clip::Sforzo => include_bytes!("../assets/clips/fai_uno_sforzo.mp3"),
-            _ => todo!(),
-        }
+        self.data().bytes
     }
 }
 
@@ -143,10 +191,7 @@ enum AppEvent {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // initialize the hotkeys manager
-    let manager = GlobalHotKeyManager::new().context("failed to create global hotkey manager")?;
-    let mut by_id: HashMap<u32, Clip> = HashMap::new();
-
+    let mut hotkey_manager = HotkeyManager::new()?;
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     TrayIconEvent::set_event_handler(Some(move |event| {
@@ -174,9 +219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     for &clip in Clip::ALL {
-        let hotkey = clip.global_shortcut();
-        let _ = manager.register(hotkey)?;
-        by_id.insert(hotkey.id(), clip);
+        hotkey_manager.register(clip)?;
     }
 
     let separator = PredefinedMenuItem::separator();
@@ -216,10 +259,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Event::UserEvent(AppEvent::Hotkey(e)) => {
-                if e.state == HotKeyState::Pressed {
-                    if let Some(clip) = Clip::from_hotkey_id(e.id) {
-                        play(&mut audio, clip);
-                    }
+                if e.state == HotKeyState::Pressed
+                    && let Some(clip) = hotkey_manager.clip_for(e.id)
+                {
+                    play(&mut audio, clip);
                 }
             }
             _ => {}

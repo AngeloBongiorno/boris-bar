@@ -1,17 +1,18 @@
 use std::{env, fs, path::PathBuf};
 
-const CLIPS: &[&str] = &["fai_uno_sforzo", "tutti_basiti", "cane"];
+const CLIPS: &[&str] = &["fai_uno_sforzo", "tutti_basiti", "a_cazzo_di_cane"];
 
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-changed=assets/clips");
 
     for name in CLIPS {
-        let src = PathBuf::from("assets/clips").join(format!("{name}.wav"));
-        let dst = out.join(format!("{name}.wav"));
+        let file = format!("{name}.mp3");
+        let src = PathBuf::from("assets/clips").join(&file);
+        let dst = out.join(&file);
 
         if src.exists() {
-            fs::copy(&src, &dst).expect("copy sound");
+            fs::copy(&src, &dst).expect("copy clip");
         } else {
             println!("cargo:warning=missing {}, using silence", src.display());
             fs::write(&dst, silent_wav()).expect("write placeholder");
