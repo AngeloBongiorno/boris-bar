@@ -1,16 +1,24 @@
 use anyhow::{Context, Result};
-use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Float};
-use std::io::Cursor;
-use std::thread;
-use std::time::Duration;
+use global_hotkey::{
+    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
+    hotkey::{
+        CMD_OR_CTRL as HK_CMD_OR_CTRL, Code as HotkeyCode, HotKey as GlobalShortcut, Modifiers as GlobalModifiers,
+    },
+};
+use rodio::{Decoder, DeviceSinkBuilder, Float, MixerDeviceSink, Player};
+use std::{collections::HashMap, io::Cursor, thread, time::Duration};
 use tao::{
     event::{Event, StartCause},
     event_loop::{ControlFlow, EventLoopBuilder},
 };
-use tray_icon::menu::accelerator::{Accelerator, Code};
 use tray_icon::{
     Icon, TrayIconBuilder, TrayIconEvent,
-    menu::{IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, accelerator::Modifiers},
+    menu::{
+        IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem,
+        accelerator::{
+            Accelerator as MenuShortcut, CMD_OR_CTRL as M_CMD_OR_CTRL, Code as MenuCode, Modifiers as MenuModifiers,
+        },
+    },
 };
 
 const FADE: Duration = Duration::from_millis(40);
@@ -18,21 +26,20 @@ const FADE_STEPS: u32 = 8;
 
 struct Audio {
     sink: MixerDeviceSink,
-    current: Option<(Sound, Player)>,
+    current: Option<(Clip, Player)>,
 }
 
 impl Audio {
     fn new() -> anyhow::Result<Self> {
-        let sink =
-            DeviceSinkBuilder::open_default_sink().context("failed to open device sink")?;
+        let sink = DeviceSinkBuilder::open_default_sink().context("failed to open device sink")?;
         Ok(Self {
             sink,
-            current: None
+            current: None,
         })
     }
 
-    fn trigger(&mut self, sound: Sound) -> anyhow::Result<()> {
-        let toggle_off = matches!(&self.current, Some((s, p)) if *s == sound && !p.empty());
+    fn trigger(&mut self, clip: Clip) -> anyhow::Result<()> {
+        let toggle_off = matches!(&self.current, Some((s, p)) if *s == clip && !p.empty());
 
         self.fade_out_current();
 
@@ -41,8 +48,8 @@ impl Audio {
         }
 
         let player = Player::connect_new(self.sink.mixer());
-        player.append(Decoder::try_from(Cursor::new(sound.bytes()))?);
-        self.current = Some((sound, player));
+        player.append(Decoder::try_from(Cursor::new(clip.bytes()))?);
+        self.current = Some((clip, player));
         Ok(())
     }
 
@@ -66,47 +73,63 @@ impl Audio {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Sound {
+enum Clip {
     Sforzo,
     Basiti,
     Cane,
 }
 
-impl Sound {
-    const ALL: &'static [Sound] = &[Sound::Sforzo, Sound::Basiti, Sound::Cane];
+impl Clip {
+    const ALL: &'static [Clip] = &[Clip::Sforzo, Clip::Basiti, Clip::Cane];
 
     const fn id(self) -> &'static str {
         match self {
-            Sound::Sforzo => "fai uno sforzo",
-            Sound::Basiti => "tutti basiti",
-            Sound::Cane => "a cazzo di cane",
+            Clip::Sforzo => "fai uno sforzo",
+            Clip::Basiti => "tutti basiti",
+            Clip::Cane => "a cazzo di cane",
         }
     }
 
     const fn label(self) -> &'static str {
         match self {
-            Sound::Sforzo => "Fai uno sforzo",
-            Sound::Basiti => "Tutti basiti",
-            Sound::Cane => "A cazzo di cane",
+            Clip::Sforzo => "Fai uno sforzo",
+            Clip::Basiti => "Tutti basiti",
+            Clip::Cane => "A cazzo di cane",
         }
     }
 
-    fn accelerator(self) -> Accelerator {
+    fn menu_shortcut(self) -> MenuShortcut {
         let code = match self {
-            Sound::Sforzo => Code::Digit1,
-            Sound::Basiti => Code::Digit2,
-            Sound::Cane => Code::Digit3,
+            Clip::Sforzo => MenuCode::Digit1,
+            Clip::Basiti => MenuCode::Digit2,
+            Clip::Cane => MenuCode::Digit3,
         };
-        Accelerator::new(Modifiers::META, code)
+        MenuShortcut::new(M_CMD_OR_CTRL | MenuModifiers::ALT, code)
+    }
+
+    fn global_shortcut(self) -> GlobalShortcut {
+        let code = match self {
+            Clip::Sforzo => HotkeyCode::Digit1,
+            Clip::Basiti => HotkeyCode::Digit2,
+            Clip::Cane => HotkeyCode::Digit3,
+        };
+        GlobalShortcut::new(Some(HK_CMD_OR_CTRL | GlobalModifiers::ALT), code)
     }
 
     fn from_id(id: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|s| s.id() == id)
     }
 
+    fn from_hotkey_id(id: u32) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|s| s.global_shortcut().id == id)
+    }
+
     fn bytes(self) -> &'static [u8] {
         match self {
-            Sound::Sforzo => include_bytes!("../assets/clips/fai_uno_sforzo.mp3"),
+            Clip::Sforzo => include_bytes!("../assets/clips/fai_uno_sforzo.mp3"),
             _ => todo!(),
         }
     }
@@ -116,10 +139,13 @@ impl Sound {
 enum AppEvent {
     Tray(TrayIconEvent),
     Menu(MenuEvent),
+    Hotkey(GlobalHotKeyEvent),
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    thread::sleep(Duration::from_secs(1));
+    // initialize the hotkeys manager
+    let manager = GlobalHotKeyManager::new().context("failed to create global hotkey manager")?;
+    let mut by_id: HashMap<u32, Clip> = HashMap::new();
 
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -130,21 +156,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     MenuEvent::set_event_handler(Some(move |event| {
         let _ = proxy.send_event(AppEvent::Menu(event));
     }));
+    let proxy = event_loop.create_proxy();
+    GlobalHotKeyEvent::set_event_handler(Some(move |event| {
+        let _ = proxy.send_event(AppEvent::Hotkey(event));
+    }));
 
     let mut tray = None;
     let mut audio = Audio::new()?;
 
     let menu = Menu::new();
 
-    let item_quit = MenuItem::new("quit", true, None);
+    let item_quit = MenuItem::new("Esci", true, None);
 
-    let sound_items: Vec<MenuItem> = Sound::ALL
+    let clip_items: Vec<MenuItem> = Clip::ALL
         .iter()
-        .map(|s| MenuItem::with_id(s.id(), s.label(), true, Some(s.accelerator())))
+        .map(|s| MenuItem::with_id(s.id(), s.label(), true, Some(s.menu_shortcut())))
         .collect();
 
+    for &clip in Clip::ALL {
+        let hotkey = clip.global_shortcut();
+        let _ = manager.register(hotkey)?;
+        by_id.insert(hotkey.id(), clip);
+    }
+
     let separator = PredefinedMenuItem::separator();
-    let mut refs: Vec<&dyn IsMenuItem> = sound_items.iter().map(|i| i as &dyn IsMenuItem).collect();
+    let mut refs: Vec<&dyn IsMenuItem> = clip_items.iter().map(|i| i as &dyn IsMenuItem).collect();
     refs.push(&separator);
     refs.push(&item_quit);
 
@@ -175,15 +211,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if e.id == item_quit.id() {
                     tray.take();
                     *control_flow = ControlFlow::Exit;
-                } else if let Some(sound) = Sound::from_id(e.id.0.as_str()) {
-                    if let Err(err) = audio.trigger(sound) {
-                        eprintln!("error playing sound: {err}");
+                } else if let Some(clip) = Clip::from_id(e.id.0.as_str()) {
+                    play(&mut audio, clip)
+                }
+            }
+            Event::UserEvent(AppEvent::Hotkey(e)) => {
+                if e.state == HotKeyState::Pressed {
+                    if let Some(clip) = Clip::from_hotkey_id(e.id) {
+                        play(&mut audio, clip);
                     }
                 }
             }
             _ => {}
         }
     });
+}
+
+fn play(audio: &mut Audio, clip: Clip) {
+    if let Err(err) = audio.trigger(clip) {
+        eprintln!("failed to play {clip:?}: {err:#}");
+    }
 }
 
 fn load_icon() -> Result<Icon> {
