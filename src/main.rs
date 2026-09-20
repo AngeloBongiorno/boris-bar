@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use anyhow::{Context, Result};
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
@@ -192,7 +193,15 @@ enum AppEvent {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut hotkey_manager = HotkeyManager::new()?;
-    let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+
+    #[allow(unused_mut)]
+    let mut event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+        event_loop.set_activation_policy(ActivationPolicy::Accessory);
+    }
+
     let proxy = event_loop.create_proxy();
     TrayIconEvent::set_event_handler(Some(move |event| {
         let _ = proxy.send_event(AppEvent::Tray(event));
