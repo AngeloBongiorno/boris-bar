@@ -33,6 +33,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libxdo-dev libappindicator3-dev
 
+      - name: Install Linux rodio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libappindicator3-dev libasound2-dev
+
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -61,6 +66,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libxdo-dev libappindicator3-dev
+
+      - name: Install Linux rodio dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libappindicator3-dev libasound2-dev
 
       - name: Build
         run: cargo build --release
